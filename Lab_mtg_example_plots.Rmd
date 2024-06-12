@@ -1,59 +1,154 @@
 ---
-title: "Lab_mtg_example_plots"
-author: "Veronica"
+title: "Lab mtg example plots"
 date: "`r Sys.Date()`"
 output: html_document
 runtime: shiny
 ---
 
-```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
-```
 
-This R Markdown document is made interactive using Shiny. Unlike the more traditional workflow of creating static reports, you can now create documents that allow your readers to change the assumptions underlying your analysis and see the results immediately. 
+## Example plots page
+```{r eval =TRUE, echo=FALSE, message = FALSE, warning = FALSE }
+############## SMALL SPATIAL SCALES ONLY ##############
+library(tidyverse)
+library(chorddiag)
+library(gdata)
 
-To learn more, see [Interactive Documents](http://rmarkdown.rstudio.com/authoring_shiny.html).
+df<- read.csv("example_categories.csv", header = TRUE)
+out_gen1 <- crossprod(table(subset(stack(setNames(lapply(strsplit(df$Category, 
+                                                                 ",\\s*"), trimws), df$Id))[2:1],nzchar(values))))
+diag(out_gen1) <- 0
 
-## Inputs and Outputs
+#Make interactive plots
+cols_g <- c("#FFBBFF","#B3EE3A", "#3A5FCD", "#009E73","#FFA07A","#6EE2FF",
+           "#00008B")
 
-You can embed Shiny inputs and outputs in your document. Outputs are automatically updated whenever inputs change.  This demonstrates how a standard R plot can be made interactive by wrapping it in the Shiny `renderPlot` function. The `selectInput` and `sliderInput` functions create the input widgets used to drive the plot.
 
-```{r eruptions, echo=FALSE}
-inputPanel(
-  selectInput("n_breaks", label = "Number of bins:",
-              choices = c(10, 20, 35, 50), selected = 20),
-  
-  sliderInput("bw_adjust", label = "Bandwidth adjustment:",
-              min = 0.2, max = 2, value = 1, step = 0.2)
-)
+plt <- chorddiag(out_gen1, groupColors = cols_g, showGroupnames = FALSE,groupPadding = 2,showTooltips = TRUE,precision=3,showZeroTooltips = FALSE,tickInterval=10,ticklabelFontsize=0,groupnamePadding = 0,width = 350, height=350, margin=10)
 
-renderPlot({
-  hist(faithful$eruptions, probability = TRUE, breaks = as.numeric(input$n_breaks),
-       xlab = "Duration (minutes)", main = "Geyser eruption duration")
-  
-  dens <- density(faithful$eruptions, adjust = input$bw_adjust)
-  lines(dens, col = "blue")
-})
-```
+# Define titles for each graph
+title_plt <- "A plot"
 
-## Embedded Application
-
-It's also possible to embed an entire Shiny application within an R Markdown document using the `shinyAppDir` function. This example embeds a Shiny application located in another directory:
-
-```{r tabsets, echo=FALSE}
-shinyAppDir(
-  system.file("examples/06_tabsets", package = "shiny"),
-  options = list(
-    width = "100%", height = 550
+# Create div layout with custom CSS and titles
+layout <- tags$div(
+  class = "layout-container",
+  tags$div(
+    class = "graph-container",
+    tags$h1(title_plt),  # Add title for graph p1
+    plt
   )
 )
+
 ```
 
-Note the use of the `height` parameter to determine how much vertical space the embedded application should occupy.
+```{r eval =TRUE, echo=FALSE, message = FALSE, warning = FALSE}
+library(shinydashboard)
+order_gp <- cbind(names,cols_g)
+ui <- fluidPage(
+  dashboardBody(
+    tags$head(
+      tags$style(
+        HTML("
+          body {overflow-y: hidden;}
+          .graph-container h1 {
+            width: 100%;
+            font-size: 30px;
+            margin-top: 20px; 
+          }
+          .layout-container {
+            padding-top: 0;
+          }
+          .shiny-app-title {
+            font-size: 5px; 
+            text-align: center; 
+          }
+        ")
+      )
+    ),
+    fluidRow(
+      column(width = 6,
+             layout  # Add the static layout here
+      ),
+      column(width = 6, class = "shiny-app-container",
+             tags$div(
+               class = "shiny-app-title",
+               tags$h2("Filtered plots")
+             ),
+             sidebarLayout(
+               sidebarPanel(
+                 uiOutput("selected_taxa1"),
+                 div(actionButton("add_plot1", "Plot"))
+               ),
+               mainPanel(
+                 chorddiag::chorddiagOutput("chordDiagram1")
+               )
+             )
+      )
+    )
+  )
+)
 
-You can also use the `shinyApp` function to define an application inline rather then in an external directory.
+server <- function(input, output, session) {
+  taxa_list <- reactive({
+    unique(names)
+  })
+  
+  # This function give us a select list input, in order to be able to select the gene that we want to see
+  output$selected_taxa1 <- renderUI({
+    selectizeInput(inputId = "taxa", "Select a letter", choices=taxa_list(), options=list(maxOptions = length(taxa_list())))
+  })
+  
+  mydata <- reactive({
+    req(input$taxa)
+      df <- df %>% 
+        filter(str_detect(Category, pattern = input$taxa))
+      out_df <- crossprod(table(subset(stack(setNames(lapply(strsplit(df$Category, 
+                                                                 ",\\s*"), trimws), df$Id))[2:1], nzchar(values))))
+      diag(out_df) <- 0
+      custom_order_f <- intersect(names,colnames(out_df))
+      out_df <- out_df[custom_order_f, custom_order_f]
+      out_df
+  })
 
-In all of R code chunks above the `echo = FALSE` attribute is used. This is to prevent the R code within the chunk from rendering in the document alongside the Shiny components.
+ 
 
+  use_cols <- reactive({
+  req(input$taxa)
+  out_df <- crossprod(table(subset(stack(setNames(lapply(strsplit(df$Category, 
+                                                           ",\\s*"), trimws), df$Id))[2:1], nzchar(values))))
+  diag(out_df) <- 0
+  out_df <- out_df[names, names]
+  cols <- subset((order_gp[,2]), names %in% colnames(out_df))
+  cols
+})
+  
+  v <- reactiveValues(plot = NULL, table=NULL)
+  
+  observeEvent(input$add_plot1, {
+     output$chordDiagram1 <- renderChorddiag({ chorddiag::chorddiag(mydata(), groupColors = use_cols(), showGroupnames = FALSE, groupPadding = 2,showTooltips = TRUE,precision=3, showZeroTooltips = FALSE,tickInterval=10,ticklabelFontsize=0,groupnamePadding = 0,width = 550, height=350, margin=10)
+     })
+  })
+  output$staticPlot <- renderPlot({plt
+  })
+}
 
+shinyApp(ui, server,options = list(width = 1300, height=600))
+```
 
+<div style="width: 500%;">
+```{r eval =TRUE, echo=FALSE, message = FALSE, warning = FALSE }
+legend_colors <- c("#FFBBFF","#B3EE3A", "#3A5FCD", "#009E73","#FFA07A","#6EE2FF","#00008B")
+names <- c("A","B","C","D","E","F","G")
+n<-length(names)
+plot_legend <- function(names, legend_colors) {
+  plot(0, 0, type = "n", axes = FALSE, xlab = "", ylab = "",
+       xlim = c(0, 1), ylim = c(0, 1))
+  for (i in 1:length(names)) {
+    rect(0.1, 1 - i * 0.1, 0.2, 1 - (i - 1) * 0.1,
+         col = legend_colors[i], border = NA)
+    text(0.3, 1 - (i - 0.5) * 0.1, names[i], adj = 0)
+  }
+}
+par(mfrow = c(1, 4),mar = c(0, 0, 1, 0)) ;
+plot_legend(names[1:n], legend_colors[1:n])
+title("Legend", line = 0, adj = 0)  
+```
